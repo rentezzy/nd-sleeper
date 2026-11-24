@@ -10,16 +10,16 @@ enum StatusPrinter {
     }
 
     static func text(_ report: StatusReport) -> String {
-        let rows: [(String, String)] = [
+        let override: String = report.override.map(describe) ?? "none"
+        let summary: [(String, String)] = [
             ("Mode", describe(report.phase)),
             ("Power", power(report)),
             ("Lid", report.lid.rawValue),
             ("Sleep flag", flag(report)),
-            ("Override", report.override.map(describe) ?? "none"),
+            ("Override", override),
         ]
-        + (report.lidWindowRemainingSeconds.map { [("Lid window", "\(format($0)) left")] } ?? [])
-        + agentRows(report)
-        + metricRows(report.metrics)
+        let window: [(String, String)] = report.lidWindowRemainingSeconds.map { [("Lid window", "\(format($0)) left")] } ?? []
+        let rows: [(String, String)] = summary + window + agentRows(report) + metricRows(report.metrics)
 
         let width = rows.map(\.0.count).max() ?? 0
         let body = rows.map { "\($0.0.padding(toLength: width, withPad: " ", startingAt: 0))   \($0.1)" }

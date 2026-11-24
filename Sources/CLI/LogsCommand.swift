@@ -23,9 +23,11 @@ enum LogsCommand {
     private static func lines() -> [String] {
         let directory = URL(fileURLWithPath: NSHomeDirectory())
             .appendingPathComponent(InstallPath.HomeRelative.journalDirectory)
-        return (JournalFiles.rotated.reversed() + [JournalFiles.current])
-            .compactMap { try? String(contentsOf: directory.appendingPathComponent($0), encoding: .utf8) }
-            .flatMap { $0.split(separator: "\n").map(String.init) }
+        let names: [String] = JournalFiles.rotated.reversed() + [JournalFiles.current]
+        let contents: [String] = names.compactMap { name in
+            try? String(contentsOf: directory.appendingPathComponent(name), encoding: .utf8)
+        }
+        return contents.flatMap { $0.split(separator: "\n").map(String.init) }
     }
 
     private static func format(_ entry: JournalEntry, formatter: DateFormatter) -> String {
