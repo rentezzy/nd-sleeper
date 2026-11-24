@@ -463,6 +463,7 @@ public final class Engine: @unchecked Sendable {
             lidWindowRemainingSeconds: remaining(inputs.lidWindowEndsAt),
             sources: verdict().sources,
             sourceNotes: notes,
+            sourceDisplayNames: Dictionary(uniqueKeysWithValues: sources.map { ($0.descriptor.name, $0.descriptor.displayName) }),
             metrics: includeMetrics ? currentCounters() : nil
         ))
     }

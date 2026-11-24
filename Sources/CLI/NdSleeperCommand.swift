@@ -104,9 +104,9 @@ struct NdSleeperCommand {
         }
         if json {
             print(try StatusPrinter.json(report))
-            StatusPrinter.versionWarnings(report).forEach { FileHandle.standardError.write(Data("\($0)\n".utf8)) }
+            StatusPrinter.warnings(report).forEach { FileHandle.standardError.write(Data("\($0)\n".utf8)) }
         } else {
-            print(StatusPrinter.text(report))
+            print(StatusPrinter.text(report, style: TerminalStyle.detect()))
         }
     }
 

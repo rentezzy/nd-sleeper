@@ -2,10 +2,11 @@ import Darwin
 
 enum ProcessList {
     static func caffeinateParents() -> [String] {
-        allPIDs()
+        let names: [String] = allPIDs()
             .filter { name(of: $0) == "caffeinate" }
             .compactMap(parentPID)
-            .map { parent in "\(name(of: parent) ?? "unknown") (\(parent))" }
+            .map { parent in name(of: parent) ?? "unknown process" }
+        return Array(Set(names)).sorted()
     }
 
     private static func allPIDs() -> [pid_t] {

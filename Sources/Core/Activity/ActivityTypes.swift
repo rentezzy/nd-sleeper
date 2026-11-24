@@ -11,11 +11,13 @@ public struct ActivityCapabilities: OptionSet, Sendable {
 
 public struct ActivitySourceDescriptor: Equatable, Sendable {
     public let name: String
+    public let displayName: String
     public let capabilities: ActivityCapabilities
     public let maxStaleness: Duration?
 
-    public init(name: String, capabilities: ActivityCapabilities, maxStaleness: Duration?) {
+    public init(name: String, displayName: String, capabilities: ActivityCapabilities, maxStaleness: Duration?) {
         self.name = name
+        self.displayName = displayName
         self.capabilities = capabilities
         self.maxStaleness = maxStaleness
     }

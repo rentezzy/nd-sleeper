@@ -11,17 +11,27 @@ enum Installer {
         try requireUser("install")
         let source = try ownExecutablePath()
 
+        let agentWasLoaded = Launchctl.isLoaded(agentTarget)
         Launchctl.bootoutAndWait(agentTarget)
         print("Installing the root helper. sudo may ask for your password.")
         guard runAsRoot([rootInstallCommand, source]) else {
+            if agentWasLoaded {
+                restartPreviousAgent()
+            }
             throw CLIError.failure("Installing the root helper failed. Run `nd-sleeper install` again.")
         }
 
         try writeFile(plist(agentPlistContents), to: agentPlistPath, mode: 0o644)
+        Launchctl.run(["enable", agentTarget])
         guard Launchctl.run(["bootstrap", guiDomain, agentPlistPath]) else {
             throw CLIError.failure("The user agent did not start. Run `nd-sleeper install` again.")
         }
         print("Installed nd-sleeper \(BuildInfo.version). Check it with `nd-sleeper status`.")
+    }
+
+    private static func restartPreviousAgent() {
+        guard FileManager.default.fileExists(atPath: agentPlistPath) else { return }
+        Launchctl.run(["bootstrap", guiDomain, agentPlistPath])
     }
 
     static func uninstall() throws {
@@ -53,6 +63,7 @@ enum Installer {
         try installBinary(from: source)
         try writeFile(plist(helperPlistContents), to: InstallPath.helperPlist, mode: 0o644)
         Launchctl.bootoutAndWait(helperTarget)
+        Launchctl.run(["enable", helperTarget])
         guard Launchctl.run(["bootstrap", "system", InstallPath.helperPlist]) else {
             throw CLIError.failure("The root helper did not start.")
         }
@@ -80,13 +91,14 @@ enum Installer {
         guard URL(fileURLWithPath: source).resolvingSymlinksInPath().path != target else { return }
 
         let directory = (target as NSString).deletingLastPathComponent
-        let staged = "\(directory)/.nd-sleeper.\(getpid())"
+        let stagingPrefix = ".\((target as NSString).lastPathComponent)."
+        let staged = "\(directory)/\(stagingPrefix)\(getpid())"
         try FileManager.default.createDirectory(
             atPath: directory,
             withIntermediateDirectories: true,
             attributes: [.posixPermissions: 0o755]
         )
-        try? FileManager.default.removeItem(atPath: staged)
+        removeLeftovers(in: directory, prefix: stagingPrefix)
         do {
             try FileManager.default.copyItem(atPath: source, toPath: staged)
             try setRootOwned(staged, mode: 0o755)
@@ -102,9 +114,11 @@ enum Installer {
 
     private static func writeFile(_ data: Data, to path: String, mode: Int) throws {
         let directory = (path as NSString).deletingLastPathComponent
-        let temporary = "\(directory)/.\((path as NSString).lastPathComponent).\(getpid())"
+        let temporaryPrefix = ".\((path as NSString).lastPathComponent)."
+        let temporary = "\(directory)/\(temporaryPrefix)\(getpid())"
         do {
             try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
+            removeLeftovers(in: directory, prefix: temporaryPrefix)
             try data.write(to: URL(fileURLWithPath: temporary))
             if geteuid() == 0 {
                 try setRootOwned(temporary, mode: mode)
@@ -119,6 +133,13 @@ enum Installer {
             try? FileManager.default.removeItem(atPath: temporary)
             throw CLIError.failure("Could not write \(path).")
         }
+    }
+
+    private static func removeLeftovers(in directory: String, prefix: String) {
+        let names: [String] = (try? FileManager.default.contentsOfDirectory(atPath: directory)) ?? []
+        names
+            .filter { $0.hasPrefix(prefix) && Int($0.dropFirst(prefix.count)) != nil }
+            .forEach { try? FileManager.default.removeItem(atPath: "\(directory)/\($0)") }
     }
 
     private static func setRootOwned(_ path: String, mode: Int) throws {

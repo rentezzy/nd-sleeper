@@ -55,6 +55,7 @@ public struct StatusReport: Codable, Equatable, Sendable {
     public let lidWindowRemainingSeconds: Double?
     public let sources: [SourceStatus]
     public let sourceNotes: [String: String]
+    public let sourceDisplayNames: [String: String]
     public let metrics: ResourceCounters?
 
     public init(
@@ -75,6 +76,7 @@ public struct StatusReport: Codable, Equatable, Sendable {
         lidWindowRemainingSeconds: Double?,
         sources: [SourceStatus],
         sourceNotes: [String: String],
+        sourceDisplayNames: [String: String],
         metrics: ResourceCounters?
     ) {
         self.agentVersion = agentVersion
@@ -94,6 +96,7 @@ public struct StatusReport: Codable, Equatable, Sendable {
         self.lidWindowRemainingSeconds = lidWindowRemainingSeconds
         self.sources = sources
         self.sourceNotes = sourceNotes
+        self.sourceDisplayNames = sourceDisplayNames
         self.metrics = metrics
     }
 }

@@ -5,6 +5,7 @@ import SQLite3
 public final class T3ActivitySource: ActivitySource, @unchecked Sendable {
     public let descriptor = ActivitySourceDescriptor(
         name: "t3",
+        displayName: "T3 Code",
         capabilities: [.reportsWaitingOnUser],
         maxStaleness: nil
     )
@@ -58,8 +59,8 @@ public final class T3ActivitySource: ActivitySource, @unchecked Sendable {
 
     public func statusNote() async -> String? {
         let holders = ProcessList.caffeinateParents()
-        guard !holders.isEmpty else { return "no caffeinate assertion" }
-        return "caffeinate held by \(holders.joined(separator: ", "))"
+        guard !holders.isEmpty else { return "not held" }
+        return "held by \(holders.joined(separator: ", "))"
     }
 
     private func startWatching(onReport: @escaping @Sendable (ActivityReport) -> Void) -> ActivityReport {
