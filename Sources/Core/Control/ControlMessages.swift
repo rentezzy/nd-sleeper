@@ -5,10 +5,12 @@ public enum ControlRequest: Codable, Equatable, Sendable {
     case setOverride(OverrideRequest)
     case auto
     case sleepNow
+    case reload
 }
 
 public enum ControlResponse: Codable, Equatable, Sendable {
     case status(StatusReport)
+    case config(ConfigStatus)
     case ok
     case failed(String)
 }
@@ -23,7 +25,25 @@ public struct OverrideStatus: Codable, Equatable, Sendable {
     }
 }
 
+public struct HelperConnection: Codable, Equatable, Sendable {
+    public let connected: Bool
+    public let version: String?
+    public let deadlineRemainingSeconds: Double?
+
+    public init(connected: Bool, version: String?, deadlineRemainingSeconds: Double?) {
+        self.connected = connected
+        self.version = version
+        self.deadlineRemainingSeconds = deadlineRemainingSeconds
+    }
+}
+
 public struct StatusReport: Codable, Equatable, Sendable {
+    public let agentVersion: String
+    public let startedAt: Date
+    public let uptimeSeconds: Double
+    public let darkWakeDetection: Bool
+    public let config: ConfigStatus
+    public let helper: HelperConnection
     public let phase: Phase
     public let power: PowerSource
     public let lid: LidState
@@ -35,11 +55,15 @@ public struct StatusReport: Codable, Equatable, Sendable {
     public let lidWindowRemainingSeconds: Double?
     public let sources: [SourceStatus]
     public let sourceNotes: [String: String]
-    public let agentVersion: String
-    public let helperVersion: String?
     public let metrics: ResourceCounters?
 
     public init(
+        agentVersion: String,
+        startedAt: Date,
+        uptimeSeconds: Double,
+        darkWakeDetection: Bool,
+        config: ConfigStatus,
+        helper: HelperConnection,
         phase: Phase,
         power: PowerSource,
         lid: LidState,
@@ -51,10 +75,14 @@ public struct StatusReport: Codable, Equatable, Sendable {
         lidWindowRemainingSeconds: Double?,
         sources: [SourceStatus],
         sourceNotes: [String: String],
-        agentVersion: String,
-        helperVersion: String?,
         metrics: ResourceCounters?
     ) {
+        self.agentVersion = agentVersion
+        self.startedAt = startedAt
+        self.uptimeSeconds = uptimeSeconds
+        self.darkWakeDetection = darkWakeDetection
+        self.config = config
+        self.helper = helper
         self.phase = phase
         self.power = power
         self.lid = lid
@@ -66,14 +94,13 @@ public struct StatusReport: Codable, Equatable, Sendable {
         self.lidWindowRemainingSeconds = lidWindowRemainingSeconds
         self.sources = sources
         self.sourceNotes = sourceNotes
-        self.agentVersion = agentVersion
-        self.helperVersion = helperVersion
         self.metrics = metrics
     }
 }
 
 public enum ControlWire {
     public static let maxMessageBytes = 64 * 1024
+    public static let malformedRequest = "malformed request"
 
     public static func encode(_ value: some Encodable) throws -> Data {
         try JSONEncoder().encode(value) + Data("\n".utf8)

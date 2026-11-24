@@ -19,7 +19,7 @@ struct CommandSpec {
 }
 
 enum Commands {
-    static let all: [CommandSpec] = [status, hold, normal, auto, sleep, logs, install, uninstall]
+    static let all: [CommandSpec] = [status, hold, normal, auto, sleep, reload, logs, install, uninstall]
 
     static func named(_ name: String) -> CommandSpec? {
         all.first { $0.name == name }
@@ -30,8 +30,9 @@ enum Commands {
         usage: "status [--json] [--metrics]",
         summary: "Shows what nd-sleeper is doing and why.",
         details: """
-        Prints the mode, power source, lid, battery, thermal state, the kernel sleep flag (wanted and actual), \
-        any override, agent sessions per source with their health, and the time left in the lid-closed window.
+        Prints the uptime, mode, power source, lid, battery, thermal state, the kernel sleep flag (wanted and \
+        actual), any override, the time left in the lid-closed window, agent sessions per source with their \
+        health, the active settings and where they came from, and the helper connection.
 
         Options:
           --json      Print machine-readable output.
@@ -95,6 +96,20 @@ enum Commands {
         details: """
         Needed because the Apple menu Sleep item does nothing while the kernel sleep flag is set. \
         Clears any override, so automatic behavior resumes when you wake the Mac.
+        """,
+        flags: [],
+        options: [],
+        maxPositionals: 0
+    )
+
+    static let reload = CommandSpec(
+        name: "reload",
+        usage: "reload",
+        summary: "Re-reads ~/.config/nd-sleeper/config.toml and applies it now.",
+        details: """
+        Settings are battery_window (seconds, 60 to 14400, default 1800) and battery_floor (percent, 1 to 99, \
+        default 20). Without the file the defaults apply. If the file has an error, nothing changes and the \
+        error is printed.
         """,
         flags: [],
         options: [],

@@ -83,6 +83,8 @@ struct NdSleeperCommand {
         case Commands.sleep.name:
             try send(.sleepNow)
             print("Sleeping.")
+        case Commands.reload.name:
+            try reload()
         case Commands.logs.name:
             let since = try ArgumentParser.duration(parsed.options["--since"], command: spec.name)
             LogsCommand.run(since: since, json: parsed.flags.contains("--json"))
@@ -108,6 +110,15 @@ struct NdSleeperCommand {
         }
     }
 
+    private static func reload() throws {
+        let response = try ControlClient.send(.reload)
+        guard case let .config(config) = response else {
+            throw CLIError.failure(failureMessage(response))
+        }
+        let origin: String = config.source == .file ? "Reloaded config.toml" : "No config.toml, using defaults"
+        print("\(origin): \(StatusPrinter.settings(config.settings)).")
+    }
+
     private static func send(_ request: ControlRequest) throws {
         let response = try ControlClient.send(request)
         guard response == .ok else {
@@ -117,6 +128,6 @@ struct NdSleeperCommand {
 
     private static func failureMessage(_ response: ControlResponse) -> String {
         guard case let .failed(reason) = response else { return "The nd-sleeper agent gave an unexpected answer." }
-        return "The nd-sleeper agent refused: \(reason)."
+        return reason.hasSuffix(".") ? "nd-sleeper refused: \(reason)" : "nd-sleeper refused: \(reason)."
     }
 }

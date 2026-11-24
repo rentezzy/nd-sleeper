@@ -99,7 +99,7 @@ final class ControlServer: @unchecked Sendable {
 
         let request = readLine(from: client).flatMap { try? ControlWire.decode(ControlRequest.self, from: $0) }
         guard let request else {
-            respond(.failed("malformed request"), to: client)
+            respond(.failed(ControlWire.malformedRequest), to: client)
             return
         }
         handler(request) { response in

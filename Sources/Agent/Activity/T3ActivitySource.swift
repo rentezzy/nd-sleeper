@@ -209,8 +209,10 @@ public final class T3ActivitySource: ActivitySource, @unchecked Sendable {
                 sessions.append(ActivitySession(id: id, state: waiting ? .waiting : .working, label: nil))
             case SQLITE_DONE:
                 return .success(sessions)
-            default:
-                return .failure(QueryError(message: lastErrorMessage(fallback: "query failed")))
+            case SQLITE_BUSY, SQLITE_LOCKED:
+                return .failure(QueryError(message: "database_busy"))
+            case let code:
+                return .failure(QueryError(message: "query_failed_\(code)"))
             }
         }
     }
@@ -220,28 +222,23 @@ public final class T3ActivitySource: ActivitySource, @unchecked Sendable {
             return .success(statement)
         }
         guard FileManager.default.fileExists(atPath: databasePath) else {
-            return .failure(QueryError(message: "T3 database not found"))
+            return .failure(QueryError(message: "database_missing"))
         }
 
         var opened: OpaquePointer?
         guard sqlite3_open_v2(databasePath, &opened, SQLITE_OPEN_READONLY | SQLITE_OPEN_NOMUTEX, nil) == SQLITE_OK else {
             sqlite3_close(opened)
-            return .failure(QueryError(message: "cannot open the T3 database"))
+            return .failure(QueryError(message: "open_failed"))
         }
         database = opened
         sqlite3_busy_timeout(opened, Self.busyTimeoutMilliseconds)
 
         var prepared: OpaquePointer?
         guard sqlite3_prepare_v2(opened, Self.sessionsQuery, -1, &prepared, nil) == SQLITE_OK, let prepared else {
-            return .failure(QueryError(message: lastErrorMessage(fallback: "T3 schema changed")))
+            return .failure(QueryError(message: "schema_mismatch"))
         }
         statement = prepared
         return .success(prepared)
-    }
-
-    private func lastErrorMessage(fallback: String) -> String {
-        guard let database, let message = sqlite3_errmsg(database) else { return fallback }
-        return "\(fallback): \(String(cString: message))"
     }
 
     private func closeDatabase() {

@@ -16,7 +16,7 @@ public enum Policy {
         let inputs = withReconcilePending(chosen.inputs, waiting)
         let outputs = waiting ? keepingDecision(of: previous, in: chosen.outputs) : chosen.outputs
         let reason = chosen.reason
-            ?? enteredStress(from: previous, to: outputs, readings: inputs.readings)
+            ?? enteredStress(from: previous, to: outputs, inputs: inputs)
             ?? applied.reason
 
         let actions = diff(
@@ -67,6 +67,12 @@ public enum Policy {
             return (next, .sleepRetry)
         case .helperFlagObserved:
             return (next, .helperFlagMismatch)
+        case let .settingsChanged(settings):
+            next.lidWindowEndsAt = inputs.lidWindowEndsAt.map {
+                $0 - inputs.settings.windowDuration + settings.windowDuration
+            }
+            next.settings = settings
+            return (next, .settingsChanged)
         }
     }
 
@@ -158,7 +164,7 @@ public enum Policy {
 
     private static func endStressedHold(_ inputs: PolicyInputs) -> (inputs: PolicyInputs, reason: TransitionReason?) {
         guard case .hold(force: false) = inputs.override?.mode,
-              let stress = stressReason(inputs.readings)
+              let stress = stressReason(inputs)
         else { return (inputs, nil) }
 
         var next = inputs
@@ -174,7 +180,7 @@ public enum Policy {
         }
         guard mayStart, inputs.override == nil, inputs.lidWindowEndsAt == nil else { return next }
 
-        next.lidWindowEndsAt = now + SafetyLimit.lidClosedWindow
+        next.lidWindowEndsAt = now + inputs.settings.windowDuration
         return next
     }
 
@@ -187,7 +193,7 @@ public enum Policy {
               inputs.sleepRequest == nil
         else { return (inputs, nil) }
 
-        let stress = stressReason(inputs.readings)
+        let stress = stressReason(inputs)
         let windowOpen = inputs.lidWindowEndsAt.map { now < $0 } ?? false
         guard stress != nil || !windowOpen || !inputs.agentsWorking else { return (inputs, nil) }
 
@@ -219,13 +225,13 @@ public enum Policy {
         guard inputs.readings.power == .battery else {
             return PolicyOutputs(
                 phase: .pluggedIn,
-                flag: .on(.automatic(windowEndsAt: nil)),
+                flag: .on(.automatic(window: inputs.settings.windowDuration, windowEndsAt: nil)),
                 demand: base,
                 deadlines: [:]
             )
         }
 
-        if stressReason(inputs.readings) != nil {
+        if stressReason(inputs) != nil {
             return PolicyOutputs(
                 phase: .batteryStressed,
                 flag: .off,
@@ -238,7 +244,7 @@ public enum Policy {
         guard inputs.readings.lid == .closed, let windowEndsAt = inputs.lidWindowEndsAt else {
             return PolicyOutputs(
                 phase: .batteryLidOpen,
-                flag: inputs.agentsWorking ? .on(.automatic(windowEndsAt: nil)) : .off,
+                flag: inputs.agentsWorking ? .on(.automatic(window: inputs.settings.windowDuration, windowEndsAt: nil)) : .off,
                 demand: watching,
                 deadlines: [:]
             )
@@ -246,7 +252,7 @@ public enum Policy {
 
         return PolicyOutputs(
             phase: .batteryLidClosedWorking,
-            flag: .on(.automatic(windowEndsAt: windowEndsAt)),
+            flag: .on(.automatic(window: inputs.settings.windowDuration, windowEndsAt: windowEndsAt)),
             demand: watching.union([.batteryPercent]),
             deadlines: [.lidClosedWindow: windowEndsAt]
         )
@@ -283,7 +289,10 @@ public enum Policy {
         guard let previous else { return false }
 
         let demandGrew = [decided, held].contains { !$0.outputs.demand.isSubset(of: previous.demand) }
-        return inputs.reconcilePending || demandGrew || turnsFlagOnWithStaleBattery(decided, previous: previous)
+        return inputs.reconcilePending
+            || demandGrew
+            || turnsFlagOnWithStaleBattery(decided, previous: previous)
+            || changesSettingsWithStaleBattery(event, decided: decided, previous: previous)
     }
 
     private static func turnsFlagOnWithStaleBattery(_ decided: Settled, previous: PolicyOutputs) -> Bool {
@@ -292,6 +301,18 @@ public enum Policy {
         return decided.outputs.flag.isOn
             && !previous.flag.isOn
             && readings.power == .battery
+            && !previous.demand.contains(.batteryPercent)
+            && !forced
+    }
+
+    private static func changesSettingsWithStaleBattery(
+        _ event: PolicyEvent,
+        decided: Settled,
+        previous: PolicyOutputs
+    ) -> Bool {
+        guard case .settingsChanged = event else { return false }
+        let forced = decided.inputs.override?.mode == .hold(force: true)
+        return decided.inputs.readings.power == .battery
             && !previous.demand.contains(.batteryPercent)
             && !forced
     }
@@ -375,9 +396,10 @@ public enum Policy {
         readings.power == .battery && readings.lid == .closed
     }
 
-    private static func stressReason(_ readings: SystemReadings) -> TransitionReason? {
+    private static func stressReason(_ inputs: PolicyInputs) -> TransitionReason? {
+        let readings = inputs.readings
         guard readings.power == .battery else { return nil }
-        if let percent = readings.batteryPercent, percent <= SafetyLimit.batteryFloorPercent {
+        if let percent = readings.batteryPercent, percent <= inputs.settings.batteryFloor {
             return .batteryFloor
         }
         return readings.thermal >= .serious ? .thermalCutoff : nil
@@ -386,10 +408,10 @@ public enum Policy {
     private static func enteredStress(
         from previous: PolicyOutputs?,
         to next: PolicyOutputs,
-        readings: SystemReadings
+        inputs: PolicyInputs
     ) -> TransitionReason? {
         guard next.phase == .batteryStressed, previous?.phase != .batteryStressed else { return nil }
-        return stressReason(readings)
+        return stressReason(inputs)
     }
 
     private static func firedAt(_ event: PolicyEvent) -> MonotonicInstant? {

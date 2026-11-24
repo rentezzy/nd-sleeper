@@ -1,3 +1,4 @@
+import Config
 import Core
 import Foundation
 import os
@@ -6,9 +7,12 @@ public final class Engine: @unchecked Sendable {
     private static let sourceStartTimeout: Duration = .seconds(2)
 
     private let queue = DispatchQueue(label: ServiceIdentifier.agent)
-    private let logger = Logger(subsystem: ServiceIdentifier.agent, category: "engine")
-    private let journal = JournalWriter()
+    private let logger = Logger(subsystem: ServiceIdentifier.logSubsystem, category: "agent")
+    private let journal = JournalRecorder()
     private let sources: [any ActivitySource]
+    private let startedAt = Date()
+    private let startedInstant = ContinuousClock.now
+    private var config: ConfigStatus
     private var policy: PolicyState
     private var snapshots: [String: SourceSnapshot] = [:]
     private var lastCosts: [String: SourceCost] = [:]
@@ -37,8 +41,17 @@ public final class Engine: @unchecked Sendable {
     }
 
     public init(sources: [any ActivitySource] = [T3ActivitySource()]) {
+        let config = Self.loadConfig()
         self.sources = sources
-        policy = PolicyState(readings: SystemReader.readAll())
+        self.config = config
+        policy = PolicyState(readings: SystemReader.readAll(), settings: config.settings)
+    }
+
+    private static func loadConfig() -> ConfigStatus {
+        switch ConfigLoader.load() {
+        case let .success(status): status
+        case let .failure(error): ConfigStatus(settings: .defaults, source: .defaults, error: error.message)
+        }
     }
 
     public func run() -> Never {
@@ -49,13 +62,21 @@ public final class Engine: @unchecked Sendable {
     private func start() {
         logger.notice("agent \(BuildInfo.version, privacy: .public) started")
         sensors.apply([.powerSource, .systemPower])
-        if !sensors.detectsDarkWake {
-            journalError("dark wake detection unavailable, every wake counts as a full wake")
+        journal.started(
+            StartupDiagnostics(
+                version: BuildInfo.version,
+                darkWakeAPI: sensors.detectsDarkWake,
+                sources: sources.map(\.descriptor.name)
+            ),
+            config: config
+        )
+        if let error = config.error {
+            journal.error("using defaults because \(error)")
         }
         do {
             try control.start()
         } catch {
-            journalError("control socket unavailable: \(error)")
+            journal.error("control socket unavailable")
         }
         helper.send(.readStatus) { [weak self] response in
             self?.helperReplied(response)
@@ -82,9 +103,11 @@ public final class Engine: @unchecked Sendable {
         case .systemPower(.willSleep):
             break
         case .systemPower(.fullWake):
+            journal.wake(.full)
             timekeeper.rearmAll()
             refresh(.woke)
         case .systemPower(.darkWake):
+            journal.wake(.dark)
             timekeeper.rearmAll()
             refresh(.darkWoke)
         case .lidChanged:
@@ -170,8 +193,8 @@ public final class Engine: @unchecked Sendable {
         switch flag {
         case .off:
             return .setFlagOff
-        case .on(.automatic):
-            return .setFlagOn(.automatic)
+        case let .on(.automatic(window, windowEndsAt)):
+            return .setFlagOn(.automatic(window: windowEndsAt.map { $0 - now } ?? window))
         case let .on(.timedHold(endsAt)):
             return .setFlagOn(.timedHold(remaining: endsAt - now))
         case let .on(.untimedHold(capEndsAt)):
@@ -183,12 +206,14 @@ public final class Engine: @unchecked Sendable {
         switch response {
         case let .status(status):
             helperStatus = status
+            journal.helperEvents(from: status)
         case let .failed(reason, status):
             helperStatus = status
-            journalError("helper: \(reason)")
+            journal.helperEvents(from: status)
+            journal.error("helper: \(reason)")
         case nil:
             helperStatus = nil
-            journalError("helper unreachable")
+            journal.error("helper unreachable")
         }
     }
 
@@ -196,6 +221,7 @@ public final class Engine: @unchecked Sendable {
         switch notice {
         case let .status(status):
             helperStatus = status
+            journal.helperEvents(from: status)
             if let flagOn = status.flagOn {
                 feed(.helperFlagObserved(isOn: flagOn))
             }
@@ -209,7 +235,7 @@ public final class Engine: @unchecked Sendable {
             }
         case .unavailable:
             helperStatus = nil
-            journalError("helper connection invalidated")
+            journal.error("helper connection invalidated")
         }
     }
 
@@ -251,7 +277,7 @@ public final class Engine: @unchecked Sendable {
                 .forEach { source in
                     snapshots[source.descriptor.name] = SourceSnapshot(
                         descriptor: source.descriptor,
-                        report: ActivityReport(sessions: [], health: .unavailable("start timed out"), cost: .zero),
+                        report: ActivityReport(sessions: [], health: .unavailable("start_timeout"), cost: .zero),
                         updatedAt: .now
                     )
                 }
@@ -292,6 +318,7 @@ public final class Engine: @unchecked Sendable {
         counters.sourceQueries += restarted ? report.cost.queries : report.cost.queries - previousCost.queries
         counters.sourceQueryNanos += restarted ? report.cost.queryNanos : report.cost.queryNanos - previousCost.queryNanos
         lastCosts[descriptor.name] = report.cost
+        journal.sourceHealth(descriptor.name, report.health)
         snapshots[descriptor.name] = SourceSnapshot(descriptor: descriptor, report: report, updatedAt: .now)
 
         if notify {
@@ -333,10 +360,6 @@ public final class Engine: @unchecked Sendable {
         journaledCounters = current
     }
 
-    private func journalError(_ message: String) {
-        journal.write(JournalEntry(time: Date(), kind: .error, message: message))
-    }
-
     private func currentCounters() -> ResourceCounters {
         let sample = ResourceSampler.sample()
         var current = counters
@@ -362,6 +385,20 @@ public final class Engine: @unchecked Sendable {
         case .sleepNow:
             feed(.command(.sleepNow))
             reply(.ok)
+        case .reload:
+            reload(reply: reply)
+        }
+    }
+
+    private func reload(reply: @escaping @Sendable (ControlResponse) -> Void) {
+        switch ConfigLoader.load() {
+        case let .success(status):
+            config = status
+            journal.configReloaded(status)
+            feed(.settingsChanged(status.settings))
+            reply(.config(status))
+        case let .failure(error):
+            reply(.failed(error.message))
         }
     }
 
@@ -403,7 +440,18 @@ public final class Engine: @unchecked Sendable {
         let override = inputs.override.map { override in
             OverrideStatus(mode: override.mode, remainingSeconds: remaining(override.expiresAt ?? inputs.holdCapEndsAt))
         }
+        let helper = HelperConnection(
+            connected: helperStatus != nil,
+            version: helperStatus?.version,
+            deadlineRemainingSeconds: helperStatus?.deadlineRemainingSeconds
+        )
         return .status(StatusReport(
+            agentVersion: BuildInfo.version,
+            startedAt: startedAt,
+            uptimeSeconds: (now - startedInstant).seconds,
+            darkWakeDetection: sensors.detectsDarkWake,
+            config: config,
+            helper: helper,
             phase: outputs.phase,
             power: inputs.readings.power,
             lid: inputs.readings.lid,
@@ -415,8 +463,6 @@ public final class Engine: @unchecked Sendable {
             lidWindowRemainingSeconds: remaining(inputs.lidWindowEndsAt),
             sources: verdict().sources,
             sourceNotes: notes,
-            agentVersion: BuildInfo.version,
-            helperVersion: helperStatus?.version,
             metrics: includeMetrics ? currentCounters() : nil
         ))
     }

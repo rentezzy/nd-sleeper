@@ -32,6 +32,7 @@ enum Installer {
             remove(agentPlistPath) ? nil : "remove \(agentPlistPath)",
             remove(ControlClient.socketPath) ? nil : "remove the control socket",
         ].compactMap { $0 }
+        _ = remove("\(NSHomeDirectory())/\(InstallPath.HomeRelative.helperEventCursor)")
         _ = rmdir((ControlClient.socketPath as NSString).deletingLastPathComponent)
 
         print("Removing the root helper. sudo may ask for your password.")

@@ -3,10 +3,10 @@ import Foundation
 import os
 
 final class JournalWriter {
-    private static let maxBytes: UInt64 = 5 * 1024 * 1024
+    private static let maxBytes: UInt64 = 1024 * 1024
 
     private let directory: URL
-    private let logger = Logger(subsystem: ServiceIdentifier.agent, category: "journal")
+    private let logger = Logger(subsystem: ServiceIdentifier.logSubsystem, category: "journal")
     private let encoder = JournalCoding.makeEncoder()
 
     init(home: String = NSHomeDirectory()) {
@@ -23,7 +23,7 @@ final class JournalWriter {
             try rotateIfNeeded()
             try append(data + Data("\n".utf8))
         } catch {
-            logger.error("journal write failed: \(error.localizedDescription, privacy: .public)")
+            logger.error("journal write failed")
         }
     }
 
@@ -33,9 +33,9 @@ final class JournalWriter {
 
     private func log(_ line: String, kind: JournalKind) {
         switch kind {
-        case .transition: logger.notice("\(line, privacy: .public)")
         case .anomaly: logger.fault("\(line, privacy: .public)")
         case .error: logger.error("\(line, privacy: .public)")
+        default: logger.notice("\(line, privacy: .public)")
         }
     }
 

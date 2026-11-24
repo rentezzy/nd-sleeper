@@ -68,9 +68,43 @@ public struct JournalReadings: Codable, Equatable, Sendable {
 }
 
 public enum JournalKind: String, Codable, Sendable {
+    case started
     case transition
+    case configReloaded
+    case wake
+    case sourceHealth
+    case helper
     case anomaly
     case error
+}
+
+public enum WakeKind: String, Codable, Sendable {
+    case dark
+    case full
+}
+
+public struct StartupDiagnostics: Codable, Equatable, Sendable {
+    public let version: String
+    public let darkWakeAPI: Bool
+    public let sources: [String]
+
+    public init(version: String, darkWakeAPI: Bool, sources: [String]) {
+        self.version = version
+        self.darkWakeAPI = darkWakeAPI
+        self.sources = sources
+    }
+}
+
+public struct SourceHealthChange: Codable, Equatable, Sendable {
+    public let source: String
+    public let health: String
+    public let suppressed: Int?
+
+    public init(source: String, health: String, suppressed: Int?) {
+        self.source = source
+        self.health = health
+        self.suppressed = suppressed
+    }
 }
 
 public struct JournalEntry: Codable, Equatable, Sendable {
@@ -83,6 +117,11 @@ public struct JournalEntry: Codable, Equatable, Sendable {
     public let readings: JournalReadings?
     public let counters: ResourceCounters?
     public let anomaly: RateAnomaly?
+    public let startup: StartupDiagnostics?
+    public let config: ConfigStatus?
+    public let wake: WakeKind?
+    public let sourceHealth: SourceHealthChange?
+    public let helperEvent: HelperEvent?
     public let message: String?
 
     public init(
@@ -95,6 +134,11 @@ public struct JournalEntry: Codable, Equatable, Sendable {
         readings: JournalReadings? = nil,
         counters: ResourceCounters? = nil,
         anomaly: RateAnomaly? = nil,
+        startup: StartupDiagnostics? = nil,
+        config: ConfigStatus? = nil,
+        wake: WakeKind? = nil,
+        sourceHealth: SourceHealthChange? = nil,
+        helperEvent: HelperEvent? = nil,
         message: String? = nil
     ) {
         self.time = time
@@ -106,6 +150,11 @@ public struct JournalEntry: Codable, Equatable, Sendable {
         self.readings = readings
         self.counters = counters
         self.anomaly = anomaly
+        self.startup = startup
+        self.config = config
+        self.wake = wake
+        self.sourceHealth = sourceHealth
+        self.helperEvent = helperEvent
         self.message = message
     }
 }

@@ -7,16 +7,21 @@ import os
 import XPC
 
 public final class HelperService: @unchecked Sendable {
+    private static let maxEvents = 32
+
     private enum ArmedDeadline {
         case fromArming(Duration)
         case at(ContinuousClock.Instant)
     }
 
     private let queue = DispatchQueue(label: ServiceIdentifier.helper)
-    private let logger = Logger(subsystem: ServiceIdentifier.helper, category: "helper")
+    private let logger = Logger(subsystem: ServiceIdentifier.logSubsystem, category: "helper")
     private var listener: xpc_connection_t?
     private var agent: xpc_connection_t?
-    private var requestedDeadline = ArmedDeadline.fromArming(SafetyLimit.autoHelperDeadline)
+    private var requestedDeadline = ArmedDeadline.fromArming(HelperDeadline.defaultAutomatic.batteryLimit)
+    private let instance = UUID().uuidString
+    private var events: [HelperEvent] = []
+    private var nextSequence: UInt64 = 1
     private var deadlineTimer: DispatchSourceTimer?
     private var deadlineEndsAt: ContinuousClock.Instant?
     private var powerToken = NOTIFY_TOKEN_INVALID
@@ -32,7 +37,7 @@ public final class HelperService: @unchecked Sendable {
     private func start() {
         logger.notice("helper \(BuildInfo.version, privacy: .public) started")
         if PowerManagement.isOnBattery() {
-            clearFlag(reason: "started on battery")
+            clearFlag(.startedOnBattery)
         }
         handleTermination()
         watchPowerSource()
@@ -43,7 +48,7 @@ public final class HelperService: @unchecked Sendable {
         signal(SIGTERM, SIG_IGN)
         let source = DispatchSource.makeSignalSource(signal: SIGTERM, queue: queue)
         source.setEventHandler { [weak self] in
-            self?.clearFlag(reason: "helper stopping", sleepIfLidClosed: false)
+            self?.clearFlag(.stopping, sleepIfLidClosed: false)
             exit(0)
         }
         source.resume()
@@ -78,7 +83,7 @@ public final class HelperService: @unchecked Sendable {
 
     private func listenerFailed() {
         logger.fault("mach service listener failed, exiting")
-        clearFlag(reason: "listener failed", sleepIfLidClosed: false)
+        clearFlag(.listenerFailed, sleepIfLidClosed: false)
         exit(1)
     }
 
@@ -129,10 +134,10 @@ public final class HelperService: @unchecked Sendable {
         guard peer === agent else { return }
 
         agent = nil
-        requestedDeadline = .fromArming(SafetyLimit.autoHelperDeadline)
+        requestedDeadline = .fromArming(HelperDeadline.defaultAutomatic.batteryLimit)
         logger.notice("agent disconnected")
         if PowerManagement.isOnBattery() {
-            clearFlag(reason: "agent disconnected on battery")
+            clearFlag(.agentDisconnected)
         }
     }
 
@@ -177,7 +182,9 @@ public final class HelperService: @unchecked Sendable {
             version: BuildInfo.version,
             flagOn: PowerManagement.readSleepDisabled(),
             onBattery: PowerManagement.isOnBattery(),
-            deadlineRemainingSeconds: deadlineEndsAt.map { max(0, ($0 - ContinuousClock.now).seconds) }
+            deadlineRemainingSeconds: deadlineEndsAt.map { max(0, ($0 - ContinuousClock.now).seconds) },
+            instance: instance,
+            events: events
         )
     }
 
@@ -187,7 +194,7 @@ public final class HelperService: @unchecked Sendable {
             return
         }
         guard agent != nil else {
-            clearFlag(reason: "unplugged with no agent connected")
+            clearFlag(.unpluggedWithoutAgent)
             return
         }
         armDeadlineIfOnBattery()
@@ -219,37 +226,46 @@ public final class HelperService: @unchecked Sendable {
 
     private func resetDeadline() {
         cancelDeadlineTimer()
-        requestedDeadline = .fromArming(SafetyLimit.autoHelperDeadline)
+        requestedDeadline = .fromArming(HelperDeadline.defaultAutomatic.batteryLimit)
     }
 
     private func deadlineExpired() {
         cancelDeadlineTimer()
         guard PowerManagement.isOnBattery() else { return }
 
-        clearFlag(reason: "battery deadline reached")
+        clearFlag(.batteryDeadline)
     }
 
-    private func clearFlag(reason: String, sleepIfLidClosed: Bool = true) {
+    private func clearFlag(_ kind: HelperEventKind, sleepIfLidClosed: Bool = true) {
         resetDeadline()
         guard PowerManagement.readSleepDisabled() != false else { return }
 
         guard PowerManagement.setSleepDisabled(false) else {
-            logger.fault("failed to clear the sleep flag: \(reason, privacy: .public)")
+            logger.fault("failed to clear the sleep flag: \(kind.rawValue, privacy: .public)")
             return
         }
-        logger.notice("cleared the sleep flag: \(reason, privacy: .public)")
+        logger.notice("cleared the sleep flag: \(kind.rawValue, privacy: .public)")
+        let slept = sleepIfLidClosedOnBattery(sleepIfLidClosed)
+        record(kind, slept: slept)
         notifyAgent()
-        sleepIfLidClosedOnBattery(sleepIfLidClosed)
     }
 
-    private func sleepIfLidClosedOnBattery(_ enabled: Bool) {
-        guard enabled, PowerManagement.isOnBattery(), PowerManagement.isLidClosed() else { return }
+    private func record(_ kind: HelperEventKind, slept: Bool) {
+        let event = HelperEvent(sequence: nextSequence, time: Date(), kind: kind, sleptLidClosed: slept)
+        nextSequence += 1
+        events = Array((events + [event]).suffix(Self.maxEvents))
+    }
 
-        if PowerManagement.sleepSystem() {
+    private func sleepIfLidClosedOnBattery(_ enabled: Bool) -> Bool {
+        guard enabled, PowerManagement.isOnBattery(), PowerManagement.isLidClosed() else { return false }
+
+        let slept = PowerManagement.sleepSystem()
+        if slept {
             logger.notice("sleeping because the lid is closed on battery")
         } else {
             logger.fault("sleep request was refused with the lid closed on battery")
         }
+        return slept
     }
 
     private func decodeRequest(_ message: xpc_object_t) -> HelperRequest? {

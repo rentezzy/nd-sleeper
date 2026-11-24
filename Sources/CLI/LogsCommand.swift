@@ -40,7 +40,49 @@ enum LogsCommand {
             return "\(time)  anomaly: \(anomaly)"
         case .error:
             return "\(time)  error: \(entry.message ?? "unknown")"
+        case .started:
+            return "\(time)  started \(started(entry))"
+        case .configReloaded:
+            return "\(time)  settings reloaded: \(config(entry.config))"
+        case .wake:
+            return "\(time)  \(entry.wake?.rawValue ?? "unknown") wake"
+        case .sourceHealth:
+            return "\(time)  \(health(entry.sourceHealth))"
+        case .helper:
+            return "\(time)  \(helper(entry.helperEvent))"
         }
+    }
+
+    private static func started(_ entry: JournalEntry) -> String {
+        guard let startup = entry.startup else { return "" }
+        let darkWake: String = startup.darkWakeAPI ? "dark wake detection on" : "dark wake detection off"
+        return "\(startup.version), \(darkWake), sources \(startup.sources.joined(separator: ", ")), \(config(entry.config))"
+    }
+
+    private static func config(_ config: ConfigStatus?) -> String {
+        guard let config else { return "unknown" }
+        let source: String = config.source == .file ? "from config.toml" : "defaults"
+        return "\(StatusPrinter.settings(config.settings)) (\(source))"
+    }
+
+    private static func health(_ change: SourceHealthChange?) -> String {
+        guard let change else { return "source health changed" }
+        let suppressed: String = change.suppressed.map { " (\($0) similar changes not logged)" } ?? ""
+        return "\(change.source) health \(change.health)\(suppressed)"
+    }
+
+    private static func helper(_ event: HelperEvent?) -> String {
+        guard let event else { return "helper event" }
+        let reason: String = switch event.kind {
+        case .startedOnBattery: "it started on battery"
+        case .agentDisconnected: "the agent disconnected on battery"
+        case .unpluggedWithoutAgent: "unplugged while the agent was not running"
+        case .batteryDeadline: "its battery deadline passed"
+        case .stopping: "the helper is stopping"
+        case .listenerFailed: "the helper could not start its service"
+        }
+        let slept: String = event.sleptLidClosed ? ", slept with the lid closed" : ""
+        return "helper cleared the sleep flag because \(reason)\(slept)"
     }
 
     private static func transition(_ entry: JournalEntry) -> String {

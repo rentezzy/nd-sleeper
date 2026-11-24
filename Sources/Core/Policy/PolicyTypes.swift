@@ -89,10 +89,11 @@ public enum PolicyEvent: Equatable, Sendable {
     case command(PolicyCommand)
     case deadlineFired(DeadlineKind, scheduledFor: MonotonicInstant)
     case helperFlagObserved(isOn: Bool)
+    case settingsChanged(PolicySettings)
 }
 
 public enum BatteryGuard: Equatable, Sendable {
-    case automatic(windowEndsAt: MonotonicInstant?)
+    case automatic(window: Duration, windowEndsAt: MonotonicInstant?)
     case timedHold(endsAt: MonotonicInstant)
     case untimedHold(capEndsAt: MonotonicInstant?)
 }
@@ -147,6 +148,7 @@ public enum TransitionReason: String, Codable, Sendable {
     case sleepCommand
     case sleepRetry
     case helperFlagMismatch
+    case settingsChanged
 }
 
 public struct Transition: Equatable, Sendable {
@@ -174,6 +176,7 @@ public struct SleepRequest: Equatable, Sendable {
 
 public struct PolicyInputs: Equatable, Sendable {
     public var readings: SystemReadings
+    public var settings: PolicySettings
     public var agentsWorking: Bool
     public var override: Override?
     public var lidWindowEndsAt: MonotonicInstant?
@@ -181,8 +184,9 @@ public struct PolicyInputs: Equatable, Sendable {
     public var sleepRequest: SleepRequest?
     public var reconcilePending: Bool
 
-    public init(readings: SystemReadings) {
+    public init(readings: SystemReadings, settings: PolicySettings) {
         self.readings = readings
+        self.settings = settings
         agentsWorking = false
         reconcilePending = false
     }
@@ -199,8 +203,8 @@ public struct PolicyState: Equatable, Sendable {
     public let inputs: PolicyInputs
     public let outputs: PolicyOutputs?
 
-    public init(readings: SystemReadings) {
-        inputs = PolicyInputs(readings: readings)
+    public init(readings: SystemReadings, settings: PolicySettings) {
+        inputs = PolicyInputs(readings: readings, settings: settings)
         outputs = nil
     }
 

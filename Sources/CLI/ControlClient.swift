@@ -4,6 +4,10 @@ import Foundation
 
 enum ControlClient {
     private static let timeout = timeval(tv_sec: 5, tv_usec: 0)
+    private static let versionMismatch = CLIError.failure("""
+        The running nd-sleeper agent is a different version than this command.
+        Run `nd-sleeper install` to upgrade it.
+        """)
 
     static var socketPath: String {
         "\(NSHomeDirectory())/\(InstallPath.HomeRelative.controlDirectory)/\(InstallPath.controlSocketFileName)"
@@ -16,9 +20,13 @@ enum ControlClient {
         guard let data = try? ControlWire.encode(request), writeAll(data, to: descriptor) else {
             throw CLIError.failure("Could not send the request to the nd-sleeper agent.")
         }
-        guard let line = readLine(from: descriptor),
-              let response = try? ControlWire.decode(ControlResponse.self, from: line)
-        else { throw CLIError.failure("The nd-sleeper agent did not answer. Check `nd-sleeper logs`.") }
+        guard let line = readLine(from: descriptor) else {
+            throw CLIError.failure("The nd-sleeper agent did not answer. Check `nd-sleeper logs`.")
+        }
+        guard let response = try? ControlWire.decode(ControlResponse.self, from: line) else {
+            throw versionMismatch
+        }
+        guard response != .failed(ControlWire.malformedRequest) else { throw versionMismatch }
         return response
     }
 

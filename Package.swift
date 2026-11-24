@@ -10,8 +10,9 @@ let package = Package(
     ],
     targets: [
         .target(name: "Core"),
+        .target(name: "Config", dependencies: ["Core"]),
         .target(name: "Helper", dependencies: ["Core"]),
-        .target(name: "Agent", dependencies: ["Core"]),
+        .target(name: "Agent", dependencies: ["Core", "Config"]),
         .executableTarget(name: "nd-sleeper", dependencies: ["Core", "Helper", "Agent"], path: "Sources/CLI"),
     ],
     swiftLanguageModes: [.v6]
