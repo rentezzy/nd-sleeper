@@ -1,0 +1,41 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: macos-15
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read version
+        id: version
+        run: |
+          version=$(sed -n 's/.*static let version = "\(.*\)"/\1/p' Sources/Core/Constants.swift)
+          test -n "$version"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+          if gh release view "v$version" > /dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build
+        if: steps.version.outputs.exists != 'true'
+        run: swift build -c release --arch arm64
+
+      - name: Publish
+        if: steps.version.outputs.exists != 'true'
+        run: |
+          COPYFILE_DISABLE=1 tar -czf nd-sleeper-macos-arm64.tar.gz -C "$(swift build -c release --arch arm64 --show-bin-path)" nd-sleeper
+          gh release create "${{ steps.version.outputs.tag }}" nd-sleeper-macos-arm64.tar.gz \
+            --title "${{ steps.version.outputs.tag }}" --target "$GITHUB_SHA" --generate-notes
