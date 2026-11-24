@@ -194,18 +194,18 @@ enum Installer {
 
     private static func runAsRoot(_ arguments: [String]) -> Bool {
         guard let executable = try? ownExecutablePath() else { return false }
-        return ProcessRunner.run("/usr/bin/sudo", [executable] + arguments, quiet: false)
+        return ProcessRunner.runInTerminal("/usr/bin/sudo", [executable] + arguments)
     }
 }
 
 enum Launchctl {
     @discardableResult
     static func run(_ arguments: [String]) -> Bool {
-        ProcessRunner.run("/bin/launchctl", arguments, quiet: true)
+        ProcessRunner.runQuietly("/bin/launchctl", arguments)
     }
 
     static func isLoaded(_ target: String) -> Bool {
-        ProcessRunner.run("/bin/launchctl", ["print", target], quiet: true)
+        ProcessRunner.runQuietly("/bin/launchctl", ["print", target])
     }
 
     @discardableResult
@@ -221,16 +221,54 @@ enum Launchctl {
 }
 
 enum ProcessRunner {
-    static func run(_ executable: String, _ arguments: [String], quiet: Bool) -> Bool {
+    static func runQuietly(_ executable: String, _ arguments: [String]) -> Bool {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = arguments
-        if quiet {
-            process.standardOutput = FileHandle.nullDevice
-            process.standardError = FileHandle.nullDevice
-        }
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
         guard (try? process.run()) != nil else { return false }
         process.waitUntilExit()
         return process.terminationStatus == 0
+    }
+
+    static func runInTerminal(_ executable: String, _ arguments: [String]) -> Bool {
+        let words: [String] = [executable] + arguments
+        let argv: [UnsafeMutablePointer<CChar>?] = words.map { strdup($0) } + [nil]
+        defer { argv.forEach { free($0) } }
+
+        var attributes: posix_spawnattr_t?
+        posix_spawnattr_init(&attributes)
+        defer { posix_spawnattr_destroy(&attributes) }
+        var defaultSignals: sigset_t = sigset_t((1 << (SIGINT - 1)) | (1 << (SIGQUIT - 1)))
+        posix_spawnattr_setsigdefault(&attributes, &defaultSignals)
+        posix_spawnattr_setflags(&attributes, Int16(POSIX_SPAWN_SETSIGDEF))
+
+        let previousInterrupt = signal(SIGINT, SIG_IGN)
+        let previousQuit = signal(SIGQUIT, SIG_IGN)
+        defer {
+            signal(SIGINT, previousInterrupt)
+            signal(SIGQUIT, previousQuit)
+        }
+
+        fflush(nil)
+        var pid: pid_t = 0
+        guard posix_spawn(&pid, executable, nil, &attributes, argv, environ) == 0 else { return false }
+        return exitedSuccessfully(waitForExit(pid))
+    }
+
+    private static func waitForExit(_ pid: pid_t) -> Int32? {
+        var status: Int32 = 0
+        while waitpid(pid, &status, 0) == -1 {
+            guard errno == EINTR else { return nil }
+        }
+        return status
+    }
+
+    private static func exitedSuccessfully(_ status: Int32?) -> Bool {
+        guard let status else { return false }
+        let exited: Bool = status & 0x7f == 0
+        let code: Int32 = (status >> 8) & 0xff
+        return exited && code == 0
     }
 }
